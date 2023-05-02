@@ -9,6 +9,7 @@
 #define BUTTON2_PIN 8
 #define FLASHLIGHT_PIN 7
 #define ALARM_PIN 9
+// #define A9G_POWER_PIN 10
 
 SoftwareSerial A9modem(rxPin, txPin);  // Pins D6 Rx and D5 Tx are used as used as software serial pins
 TinyGPSPlus gps;
@@ -16,55 +17,75 @@ TinyGPSPlus gps;
 const String defaultMessage = "Please help me, I'm currently located at ";
 String incomingData;
 String tempData;
-const char sample[] = "Please help me this is an emergency! I'm located at www.google.com/maps/place/14.32,120.98";
+const char noSignalMessage[] = "Please help me this is an emergency! Unfortunately there are no gps signal in my current location.";
 
 OneButton button1(BUTTON1_PIN, false);
 OneButton button2(BUTTON2_PIN, false);
 
 int flashLightState = LOW;
 int alarmState = LOW;
+int a9GInitialized = 0;
 
 void setup() {
-
+ 
   Serial.begin(115200);   // Baud rate for serial monitor
-  A9modem.begin(115200);  // Baud rate for GSM shield
+  
 
   pinMode(LED_BUILTIN, OUTPUT);  // Use builtin LED for correct GPS status
   pinMode(FLASHLIGHT_PIN, OUTPUT);
   pinMode(ALARM_PIN, OUTPUT);
+  // pinMode(A9G_POWER_PIN, OUTPUT);
   button1.attachClick(toggleFlashLight);
+  button1.attachDoubleClick(initializeA9G);
   button2.attachClick(toggleAlarm);
-  button2.attachLongPressStop(sendLocation);
+  button2.attachLongPressStart(sendLocation);
 
-  // Serial.println("started");
-  // A9modem.println("AT+GPS=1");
-  // delay(1000);
-  // A9modem.println("AT+GPSMD=2\r");   // Change to only GPS mode from GPS+BDS, set to 2 to revert to default.
-  // delay(1000);
-  // A9modem.println("AT+GPSRD=5\r");
+  // initializeA9G();
 
-  // delay(1000);
-  // // Set SMS mode to text mode
-  // A9modem.print("AT+CMGF=1\r");
-  // delay(1000);
-  
-  // // Set GSM module to TP show the output on serial out
-  // A9modem.print("AT+CNMI=2,2,0,0,0\r"); 
-  // delay(1000);
-
-  // A9modem.println("AT+CREG=2\r");
-  // delay(6000);
-
-  // A9modem.println("AT+CGATT=1\r");
-  // delay(6000);
-
-  // A9modem.println("AT+CGDCONT=1,\"IP\",\"internet\"\r");
-  // delay(6000);
-
-  // A9modem.println("AT+CGACT=1,1\r");
-  // delay(6000);
-  Serial.println("Done initialization");
+  Serial.println("Done setup");
 }
+
+void initializeA9G(){
+  A9modem.begin(115200);  // Baud rate for GSM shield
+
+  Serial.println("started");
+  A9modem.println("AT+GPS=1");
+  delay(1000);
+  A9modem.println("AT+GPSMD=2\r");   // Change to only GPS mode from GPS+BDS, set to 2 to revert to default.
+  delay(1000);
+  A9modem.println("AT+GPSRD=5\r");
+
+  delay(1000);
+  // Set SMS mode to text mode
+  A9modem.print("AT+CMGF=1\r");
+  delay(1000);
+  
+  // Set GSM module to TP show the output on serial out
+  A9modem.print("AT+CNMI=2,2,0,0,0\r"); 
+  delay(1000);
+
+  A9modem.println("AT+CREG=2\r");
+  delay(6000);
+
+  A9modem.println("AT+CGATT=1\r");
+  delay(6000);
+
+  A9modem.println("AT+CGDCONT=1,\"IP\",\"internet\"\r");
+  delay(6000);
+
+  A9modem.println("AT+CGACT=1,1\r");
+  delay(6000);
+  
+  a9GInitialized = 1;
+  Serial.println("A9G initialized");
+}
+
+// void enableA9G(){
+//   Serial.println("Double clicked button 1!");
+//   digitalWrite(A9G_POWER_PIN, HIGH);
+//   delay(3000);
+//   digitalWrite(A9G_POWER_PIN, LOW);
+// }
 
 void toggleFlashLight(){
   flashLightState = !flashLightState;
@@ -76,10 +97,25 @@ void toggleAlarm(){
   alarmState = !alarmState;
   Serial.println("Alarm toggled : " + String(alarmState));
   if(alarmState){
-    for (float f=3000;f>40;f=f*0.93){
-      tone(ALARM_PIN, f);
-      delay(10);
+    float rise_fall_time=180;
+    int steps=50;
+    float f_max=2600;
+    float f_min=1000;
+    float delay_time=rise_fall_time/steps;
+    float step_size=(f_max-f_min)/steps;
+    for (float f =f_min;f<f_max;f+=step_size){
+      tone(ALARM_PIN,f);
+      delay(delay_time);
     }
+    for (float f =f_max;f>f_min;f-=step_size){
+      tone(ALARM_PIN,f);
+      delay(delay_time);
+    }
+    // for (float f=3000;f>40;f=f*0.93){
+    //   tone(ALARM_PIN, f, 100000);
+    //   delay(10);
+        
+    // }
   }
   else{
     noTone(ALARM_PIN);
@@ -109,8 +145,14 @@ void sendLocation(){
       digitalWrite(LED_BUILTIN, LOW);  
       incomingData = "";
       tempData = "";
-    // } 
+    //
   }
+  else{
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(600);
+      digitalWrite(LED_BUILTIN, LOW);
+      sendNoSignalSMS();
+  }  
 }
 
 
@@ -121,10 +163,16 @@ void loop() {
 
   delay(10);
 
-  if (A9modem.available() > 0)
+  if (A9modem && A9modem.available() > 0 && a9GInitialized == 1)
   {
     String tokens = A9modem.readString();
     Serial.println(tokens);
+    if(tokens.length() > 0 && tokens.indexOf("RING") > 0){
+      tone(ALARM_PIN, 500, 1000);
+      delay(500);
+      noTone(ALARM_PIN);
+    }
+
     if(tokens.length() > 0 && tokens.indexOf("$G") > 0){
       
       String token;
@@ -234,6 +282,7 @@ float GpsToDecimalDegrees(const char* nmeaPos, char quadrant)
   return v;
 }
 
+
 void SendSMS()
 {                     
   // A9modem.println("AT+CMGF=1\r");
@@ -258,3 +307,22 @@ void SendSMS()
   // A9modem.println("ATD+639954261220");
 }
 
+
+
+void sendNoSignalSMS(){
+  // A9modem.print("AT+CMGS=\"+639954261220\"\r");  // Replace your mobile number here
+  // delay(1000);
+
+  // // A9modem.print("LOL");
+  // A9modem.print(noSignalMessage);
+  // // A9modem.print(incomingData);
+  // // delay(5000);
+  // // delay(1000);
+  // A9modem.write(0x1A);
+  // // A9modem.println((char)26);          // ASCII code of CTRL+Z
+  // delay(5000);
+  // Serial.println("message was sent");
+  
+  delay(1000);
+  A9modem.println("ATD+639954261220");  
+}
